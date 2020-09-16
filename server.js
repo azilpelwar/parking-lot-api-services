@@ -1,128 +1,132 @@
-var express = require("express");
-var path = require("path");
-var bodyParser = require("body-parser");
-var mongodb = require("mongodb");
-var ObjectID = mongodb.ObjectID;
+const express = require("express");
+const path = require("path");
+const bodyParser = require("body-parser");
+const mongodb = require("mongodb");
+const isEmpty = require("lodash/isEmpty");
+require("dotenv").config();
+const ObjectID = mongodb.ObjectID;
+const { MONGODB_URI, USERS_COLLECTION, SLOTS_COLLECTION } = process.env;
+const { user_sign_up, user_sign_in } = require("./schemas");
+const app = express();
 
-var CONTACTS_COLLECTION = "contacts";
-
-var app = express();
-app.use(express.static(__dirname + "/public"));
 app.use(bodyParser.json());
 
-// Create a database variable outside of the database connection callback to reuse the connection pool in your app.
-var db;
+// Database connection variable
+let db = "";
 
-// Connect to the database before starting the application server.
-mongodb.MongoClient.connect(process.env.MONGODB_URI, function (err, database) {
+// Connection to the database
+
+mongoConn = mongodb.MongoClient.connect(MONGODB_URI, (err, database) => {
   if (err) {
-    console.log("Error connecting to DB",err);
+    console.log("Error connecting to DB:", err);
     process.exit(1);
   }
-
   // Save database object from the callback for reuse.
   db = database;
   console.log("Database connection ready");
 
   // Initialize the app.
-  var server = app.listen(process.env.PORT || 8080, function () {
-    var port = server.address().port;
+  const server = app.listen(process.env.PORT || 8080, () => {
+    const port = server.address().port;
     console.log("App now running on port", port);
   });
 });
 
-// CONTACTS API ROUTES BELOW
-
 // Generic error handler used by all endpoints.
 function handleError(res, reason, message, code) {
   console.log("ERROR: " + reason);
-  res.status(code || 500).json({ error: message });
+  res.status(code || 500).json({ error: reason });
 }
 
-/*  "/contacts"
- *    GET: finds all contacts
- *    POST: creates a new contact
+/*  "/user"
+ *    GET: finds all registered users
+ *
+ *  "/user/signup"
+ *    POST: Register a user
+ *
+ *  "/user/signin"
+ *    POST: Signin a user
  */
 
-app.get("/contacts", function (req, res) {
-  db.collection(CONTACTS_COLLECTION)
-    .find({})
-    .toArray(function (err, docs) {
-      if (err) {
-        handleError(res, err.message, "Failed to get contacts.");
-      } else {
-        res.status(200).json(docs);
-      }
-    });
-});
-
-app.post("/contacts", function (req, res) {
-  var newContact = req.body;
-  newContact.createDate = new Date();
-
-  if (!(req.body.firstName || req.body.lastName)) {
-    handleError(
-      res,
-      "Invalid user input",
-      "Must provide a first or last name.",
-      400
-    );
+app.get("/user", (req, res) => {
+  try {
+    db.collection(USERS_COLLECTION)
+      .find({})
+      .toArray(function (err, docs) {
+        if (err) {
+          handleError(res, err.message, "Failed to fetch users.");
+        } else {
+          res.status(200).json(docs);
+        }
+      });
+  } catch (e) {
+    handleError(res, e, "Something went wrong");
   }
-
-  db.collection(CONTACTS_COLLECTION).insertOne(newContact, function (err, doc) {
-    if (err) {
-      handleError(res, err.message, "Failed to create new contact.");
-    } else {
-      res.status(201).json(doc.ops[0]);
-    }
-  });
 });
 
-/*  "/contacts/:id"
- *    GET: find contact by id
- *    PUT: update contact by id
- *    DELETE: deletes contact by id
+app.post("/user/signup", (req, res) => {
+  try {
+    const newUser = req.body;
+    newUser.createDate = new Date();
+
+    const { error: joiError } = user_sign_up.validate(newUser);
+
+    if (!isEmpty(joiError)) {
+      handleError(res, joiError, 400);
+    } else {
+      db.collection(USERS_COLLECTION).insertOne(newUser, (err, doc) => {
+        if (err) {
+          handleError(res, err.message, "Failed to create new user.");
+        } else {
+          res.status(201).json(doc.ops[0].ObjectID);
+        }
+      });
+    }
+  } catch (e) {
+    handleError(res, e, "Something went wrong");
+  }
+});
+
+app.post("/user/signin", (req, res) => {
+  try {
+    const User = req.body;
+
+    const { error: joiError } = user_sign_in.validate(User);
+
+    // {  userName: , Password:  }
+    if (!isEmpty(joiError)) {
+      handleError(res, joiError, 400);
+    } else {
+      db.collection(USERS_COLLECTION).findOne(
+        { userName: User.userName, Password: User.Password },
+        (err, doc) => {
+          if (err) {
+            handleError(res, err.message, "Invalid crdentials.");
+          } else {
+            if(doc != null){
+              res.status(201).json(doc._id);
+            }
+            else{
+              handleError(res, "Invalid crentials", "Invalid crdentials.");
+            }
+            
+          }
+        }
+      );
+    }
+  } catch (e) {
+    handleError(res, e, "Something went wrong");
+  }
+});
+
+/*  "/parking/occupied"
+ *    GET: finds all occupied parking slots
+ *
+ *  "/parking/free"
+ *    GET: finds all free parking slots
+ *
+ *  "/parking/check-in"
+ *    POST: Checks in a parking slot
  */
 
-app.get("/contacts/:id", function (req, res) {
-  db.collection(CONTACTS_COLLECTION).findOne(
-    { _id: new ObjectID(req.params.id) },
-    function (err, doc) {
-      if (err) {
-        handleError(res, err.message, "Failed to get contact");
-      } else {
-        res.status(200).json(doc);
-      }
-    }
-  );
-});
-
-app.put("/contacts/:id", function (req, res) {
-  var updateDoc = req.body;
-  delete updateDoc._id;
-
-  db.collection(CONTACTS_COLLECTION).updateOne(
-    { _id: new ObjectID(req.params.id) },
-    updateDoc,
-    function (err, doc) {
-      if (err) {
-        handleError(res, err.message, "Failed to update contact");
-      } else {
-        res.status(204).end();
-      }
-    }
-  );
-});
-
-app.delete("/contacts/:id", function (req, res) {
-  db.collection(CONTACTS_COLLECTION).deleteOne(
-    { _id: new ObjectID(req.params.id) },
-    function (err, result) {
-      if (err) {
-        handleError(res, err.message, "Failed to delete contact");
-      } else {
-        res.status(204).end();
-      }
-    }
-  );
-});
+ 
