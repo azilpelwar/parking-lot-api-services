@@ -56,10 +56,6 @@ app.get("/contacts", function (req, res) {
     });
 });
 
-app.post("/hello", (req, res) => {
-  console.log("Hello world");
-  res.status(200).end()
-});
 app.post("/contacts", function (req, res) {
   var newContact = req.body;
   newContact.createDate = new Date();
