@@ -3,10 +3,17 @@ const path = require("path");
 const bodyParser = require("body-parser");
 const mongodb = require("mongodb");
 const isEmpty = require("lodash/isEmpty");
+
 require("dotenv").config();
 const ObjectID = mongodb.ObjectID;
 const { MONGODB_URI, USERS_COLLECTION, SLOTS_COLLECTION } = process.env;
-const { user_sign_up, user_sign_in } = require("./schemas");
+const {
+  user_sign_up,
+  user_sign_in,
+  parking_book,
+  check_in,
+  check_out,
+} = require("./schemas");
 const app = express();
 
 app.use(bodyParser.json());
@@ -74,13 +81,14 @@ app.post("/user/signup", (req, res) => {
     if (!isEmpty(joiError)) {
       handleError(res, joiError, 400);
     } else {
-      db.collection(USERS_COLLECTION).insertOne(newUser, (err, doc) => {
-        if (err) {
+      db.collection(USERS_COLLECTION)
+        .insertOne(newUser)
+        .then((doc) => {
+          res.status(201).json(doc);
+        })
+        .catch((err) => {
           handleError(res, err.message, "Failed to create new user.");
-        } else {
-          res.status(201).json(doc.ops[0].ObjectID);
-        }
-      });
+        });
     }
   } catch (e) {
     handleError(res, e, "Something went wrong");
@@ -97,36 +105,260 @@ app.post("/user/signin", (req, res) => {
     if (!isEmpty(joiError)) {
       handleError(res, joiError, 400);
     } else {
-      db.collection(USERS_COLLECTION).findOne(
-        { userName: User.userName, Password: User.Password },
-        (err, doc) => {
-          if (err) {
-            handleError(res, err.message, "Invalid crdentials.");
+      db.collection(USERS_COLLECTION)
+        .findOne({ userName: User.userName, Password: User.Password })
+        .then((doc) => {
+          if (doc != null) {
+            res.status(201).json(doc._id);
           } else {
-            if(doc != null){
-              res.status(201).json(doc._id);
-            }
-            else{
-              handleError(res, "Invalid crentials", "Invalid crdentials.");
-            }
-            
+            handleError(res, "Invalid crentials", "Invalid crdentials.");
           }
-        }
-      );
+        })
+        .catch((err) => {
+          handleError(res, err.message, "Invalid crdentials.");
+        });
     }
   } catch (e) {
     handleError(res, e, "Something went wrong");
   }
 });
 
-/*  "/parking/occupied"
+/*  "/parking/book"
+ *  POST: Provides the parking slot for user
+ *
+ *  "/parking/occupied"
  *    GET: finds all occupied parking slots
  *
  *  "/parking/free"
  *    GET: finds all free parking slots
  *
  *  "/parking/check-in"
- *    POST: Checks in a parking slot
+ *    POST: Checks in a parking slot with parking ID
+ *
+ *  "/parking/check-out"
+ *    POST: Check out a parking with parking ID
  */
+function addMinutes(date, minutes) {
+  return new Date(date.getTime() + minutes * 60000);
+}
 
- 
+app.post("/parking/book", (req, res) => {
+  const userId = req.body;
+
+  const { error: joiError } = parking_book.validate(userId);
+  if (!isEmpty(joiError)) {
+    handleError(res, joiError, 400);
+  } else {
+    db.collection(USERS_COLLECTION)
+      .findOne({ _id: ObjectID(userId.userId) })
+      .then((user) => {
+        if (user != null) {
+          if (user.reservedParking) {
+            const currentTime = new Date();
+            console.log("current Time", currentTime);
+            //Find the reserved slot for user
+            db.collection(SLOTS_COLLECTION)
+              .findOne({
+                reserveBy: { $lt: currentTime },
+                occupied: false,
+                reservedParking: true,
+              })
+              .then((spot) => {
+                console.log("First query result:", spot);
+                if (spot) {
+                  console.log("Found reserved spot for parking: ", spot);
+                  //Found reserved spot
+                  let spotAssigned = spot;
+                  spotAssigned.assignedUser = ObjectID(user._id);
+                  spotAssigned.reserveBy = addMinutes(new Date(), 30);
+                  spotAssigned.occupied = false;
+                  db.collection(SLOTS_COLLECTION)
+                    .updateOne({ spotId: spot.spotId }, spotAssigned)
+                    .then((doc) => {
+                      res.status(201).json(spotAssigned);
+                    })
+                    .catch((err) => {
+                      handleError(res, err.message, "Internal server error");
+                    });
+                } else {
+                  // Did not find reserved parking
+                  // Find general parking
+                  db.collection(SLOTS_COLLECTION)
+                    .findOne({
+                      reserveBy: { $lt: currentTime },
+                      occupied: false,
+                      reservedParking: false,
+                    })
+                    .then((spot) => {
+                      console.log(
+                        "Found general spot for reserved user parking: ",
+                        spot
+                      );
+                      if (spot == null) {
+                        handleError(res, "Sorry! Parking is Full", 400);
+                      }
+                      let spotAssigned = spot;
+                      spotAssigned.assignedUser = ObjectID(user._id);
+                      spotAssigned.reserveBy = addMinutes(new Date(), 30);
+                      spotAssigned.occupied = false;
+                      db.collection(SLOTS_COLLECTION)
+                        .updateOne({ spotId: spot.spotId }, spotAssigned)
+                        .then((doc) => {
+                          res.status(201).json(spotAssigned);
+                        });
+                    })
+                    .catch((err) => {
+                      handleError(res, err.message, "Internal server error");
+                    });
+                }
+              })
+              .catch((err) => {
+                handleError(res, err.message, "Internal server error");
+              });
+          } else {
+            //General parkings
+            const currentTime = new Date();
+            //Find the general slot for user
+            db.collection(SLOTS_COLLECTION)
+              .findOne({
+                reserveBy: { $lt: currentTime },
+                occupied: false,
+                reservedParking: false,
+              })
+              .then((spot) => {
+                console.log("Found general spot for parking: ", spot);
+                if (spot == null) {
+                  handleError(res, "Sorry! Parking is Full", 400);
+                }
+                let spotAssigned = spot;
+                spotAssigned.assignedUser = ObjectID(user._id);
+                spotAssigned.reserveBy = addMinutes(new Date(), 30);
+                spotAssigned.occupied = false;
+                db.collection(SLOTS_COLLECTION)
+                  .updateOne({ spotId: spot.spotId }, spotAssigned)
+                  .then((doc) => {
+                    res.status(201).json(spotAssigned);
+                  });
+              })
+              .catch((err) => {
+                handleError(res, err.message, "Internal server error");
+              });
+          }
+        }
+      });
+  }
+});
+
+app.post("/parking/check-in", (req, res) => {
+  const userCheckin = req.body;
+
+  const { error: joiError } = check_in.validate(userCheckin);
+  if (!isEmpty(joiError)) {
+    handleError(res, joiError, 400);
+  } else {
+    const currentTime = new Date();
+    db.collection(USERS_COLLECTION)
+      .findOne({ _id: ObjectID(userCheckin.userId) })
+      .then((user) => {
+        if (user != null) {
+          db.collection(SLOTS_COLLECTION)
+            .findOne({
+              assignedUser: ObjectID(userCheckin.userId),
+              reserveBy: { $gt: currentTime },
+              occupied: false,
+            })
+            .then((spot) => {
+              if (spot == null) {
+                handleError(
+                  res,
+                  "Your parking time expired or booking not found",
+                  400
+                );
+              } else {
+                db.collection(SLOTS_COLLECTION)
+                  .updateOne(
+                    { spotId: spot.spotId },
+                    {
+                      $set: {
+                        checkInTime: new Date(),
+                        occupied: true,
+                      },
+                    }
+                  )
+                  .then((doc) => {
+                    res.status(201).json({
+                      success: "Check In successful",
+                      spotId: spot.spotId,
+                    });
+                  });
+              }
+            });
+        }
+      });
+  }
+});
+
+app.post("/parking/check-out", (req, res) => {
+  const userCheckout = req.body;
+
+  const { error: joiError } = check_out.validate(userCheckout);
+  if (!isEmpty(joiError)) {
+    handleError(res, joiError, 400);
+  } else {
+    db.collection(USERS_COLLECTION)
+      .findOne({ _id: ObjectID(userCheckin.userId) })
+      .then((user) => {
+        db.collection(SLOTS_COLLECTION)
+          .updateOne(
+            { spotId: spot.spotId },
+            {
+              $set: {
+                assignedUser: "",
+                reserveBy: new Date(0),
+                checkInTime: new Date(0),
+                occupied: false,
+              },
+            }
+          )
+          .then((doc) => {
+            res.status(201).json({ success: "Check out successful" });
+          });
+      });
+  }
+});
+
+app.get("/parking/occupied", (req, res) => {
+  try {
+    const currentTime = new Date();
+    db.collection(SLOTS_COLLECTION)
+      .find({ occupied: true })
+      .project({ spotId: 1, _id: 0 })
+      .toArray(function (err, docs) {
+        if (err) {
+          handleError(res, err.message, "Failed to fetch occupied parking.");
+        } else {
+          res.status(200).json(docs);
+        }
+      });
+  } catch (e) {
+    handleError(res, e, "Something went wrong");
+  }
+});
+
+app.get("/parking/free", (req, res) => {
+  try {
+    const currentTime = new Date();
+    db.collection(SLOTS_COLLECTION)
+      .find({ occupied: false, reserveBy: { $lt: currentTime } })
+      .project({ spotId: 1, _id: 0 })
+      .toArray(function (err, docs) {
+        if (err) {
+          handleError(res, err.message, "Failed to fetch free parking slot.");
+        } else {
+          res.status(200).json(docs);
+        }
+      });
+  } catch (e) {
+    handleError(res, e, "Something went wrong");
+  }
+});
