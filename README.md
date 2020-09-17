@@ -7,13 +7,11 @@
 ## Installation
 
 - Update the environment variables in .env file
-
-MONGODB_URI
-USERS_COLLECTION
-SLOTS_COLLECTION
+    - MONGODB_URI
+    - USERS_COLLECTION
+    - SLOTS_COLLECTION
 
 - Run the following command:
-
 ```sh
 node generate_parking_spots.js
 ```
@@ -38,26 +36,26 @@ node generate_parking_spots.js
 
 ## API Endpoints:
 
-"/user"
-GET: finds all registered users
+### GET /user
+    - finds all registered users
 
-"/user/signup"
-POST: Register a user
+### POST /user/signup
+    - Register a user
 
-"/user/signin"
-POST: Signin a user
+### POST /user/signin
+    - Signin a user
 
-"/parking/book"
-POST: Provides the parking slot for user
+### POST /parking/book
+    - Provides the parking slot for user
 
-"/parking/occupied"
-GET: finds all occupied parking slots
+### GET /parking/occupied
+    - Finds all occupied parking slots
 
-"/parking/free"
-GET: finds all free parking slots
+### GET /parking/free
+    - finds all free parking slots
 
-"/parking/check-in"
-POST: Checks in a parking slot with parking ID
+### POST /parking/check-in
+    - Checks in a parking slot with parking ID
 
-"/parking/check-out"
-POST: Check out a parking with parking ID
+### POST /parking/check-out
+    - Check out a parking with parking ID
