@@ -16,7 +16,7 @@
 node generate_parking_spots.js
 ```
 
-## MongoDB Database Design:
+## MongoDB Databases:
 
      - parking_slots
             - spotId
