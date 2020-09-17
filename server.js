@@ -1,5 +1,4 @@
 const express = require("express");
-const path = require("path");
 const bodyParser = require("body-parser");
 const mongodb = require("mongodb");
 const isEmpty = require("lodash/isEmpty");
@@ -59,6 +58,11 @@ app.get("/user", (req, res) => {
   try {
     db.collection(USERS_COLLECTION)
       .find({})
+      .project({
+        _id: 0,
+        Password: 0,
+        createDate: 0,
+      })
       .toArray(function (err, docs) {
         if (err) {
           handleError(res, err.message, "Failed to fetch users.");
@@ -84,7 +88,7 @@ app.post("/user/signup", (req, res) => {
       db.collection(USERS_COLLECTION)
         .insertOne(newUser)
         .then((doc) => {
-          res.status(201).json(doc);
+          res.status(201).json({ success: "User successfully created" });
         })
         .catch((err) => {
           handleError(res, err.message, "Failed to create new user.");
@@ -109,7 +113,7 @@ app.post("/user/signin", (req, res) => {
         .findOne({ userName: User.userName, Password: User.Password })
         .then((doc) => {
           if (doc != null) {
-            res.status(201).json(doc._id);
+            res.status(201).json({ id: doc._id });
           } else {
             handleError(res, "Invalid crentials", "Invalid crdentials.");
           }
@@ -138,51 +142,108 @@ app.post("/user/signin", (req, res) => {
  *  "/parking/check-out"
  *    POST: Check out a parking with parking ID
  */
+
 function addMinutes(date, minutes) {
   return new Date(date.getTime() + minutes * 60000);
 }
 
 app.post("/parking/book", (req, res) => {
-  const userId = req.body;
+  try {
+    const userId = req.body;
 
-  const { error: joiError } = parking_book.validate(userId);
-  if (!isEmpty(joiError)) {
-    handleError(res, joiError, 400);
-  } else {
-    db.collection(USERS_COLLECTION)
-      .findOne({ _id: ObjectID(userId.userId) })
-      .then((user) => {
-        if (user != null) {
-          if (user.reservedParking) {
-            const currentTime = new Date();
-            console.log("current Time", currentTime);
-            //Find the reserved slot for user
+    const { error: joiError } = parking_book.validate(userId);
+    if (!isEmpty(joiError)) {
+      handleError(res, joiError, 400);
+    } else {
+      db.collection(USERS_COLLECTION)
+        .findOne({ _id: ObjectID(userId.userId) })
+        .then((user) => {
+          if (user != null) {
+            let arrivalTimeIn = 30;
             db.collection(SLOTS_COLLECTION)
-              .findOne({
-                reserveBy: { $lt: currentTime },
-                occupied: false,
-                reservedParking: true,
-              })
-              .then((spot) => {
-                console.log("First query result:", spot);
-                if (spot) {
-                  console.log("Found reserved spot for parking: ", spot);
-                  //Found reserved spot
-                  let spotAssigned = spot;
-                  spotAssigned.assignedUser = ObjectID(user._id);
-                  spotAssigned.reserveBy = addMinutes(new Date(), 30);
-                  spotAssigned.occupied = false;
+              .count({ occupied: true })
+              .then((occupiedCount) => {
+                // Checking the parking lot occupancy
+                if (occupiedCount >= 60) {
+                  arrivalTimeIn = 15;
+                }
+                if (user.reservedParking) {
+                  const currentTime = new Date();
+                  //Find the reserved slot for user
                   db.collection(SLOTS_COLLECTION)
-                    .updateOne({ spotId: spot.spotId }, spotAssigned)
-                    .then((doc) => {
-                      res.status(201).json(spotAssigned);
+                    .findOne({
+                      reserveBy: { $lt: currentTime },
+                      occupied: false,
+                      reservedParking: true,
+                    })
+                    .then((spot) => {
+                      if (spot) {
+                        //Found reserved spot
+                        let spotAssigned = spot;
+                        spotAssigned.assignedUser = ObjectID(user._id);
+                        spotAssigned.reserveBy = addMinutes(
+                          new Date(),
+                          arrivalTimeIn
+                        );
+                        spotAssigned.occupied = false;
+                        db.collection(SLOTS_COLLECTION)
+                          .updateOne({ spotId: spot.spotId }, spotAssigned)
+                          .then((doc) => {
+                            res.status(201).json(spotAssigned);
+                          })
+                          .catch((err) => {
+                            handleError(
+                              res,
+                              err.message,
+                              "Internal server error"
+                            );
+                          });
+                      } else {
+                        // Did not find reserved parking
+                        // Find general parking
+                        db.collection(SLOTS_COLLECTION)
+                          .findOne({
+                            reserveBy: { $lt: currentTime },
+                            occupied: false,
+                            reservedParking: false,
+                          })
+                          .then((spot) => {
+                            if (spot == null) {
+                              handleError(res, "Sorry! Parking is Full", 400);
+                            }
+                            let spotAssigned = spot;
+                            spotAssigned.assignedUser = ObjectID(user._id);
+                            spotAssigned.reserveBy = addMinutes(
+                              new Date(),
+                              arrivalTimeIn
+                            );
+                            spotAssigned.occupied = false;
+                            db.collection(SLOTS_COLLECTION)
+                              .updateOne({ spotId: spot.spotId }, spotAssigned)
+                              .then((doc) => {
+                                res.status(201).json({
+                                  spotId: spotAssigned.spotId,
+                                  reserveBy: spotAssigned.reserveBy,
+                                  reservedParking: spotAssigned.reservedParking,
+                                });
+                              });
+                          })
+                          .catch((err) => {
+                            handleError(
+                              res,
+                              err.message,
+                              "Internal server error"
+                            );
+                          });
+                      }
                     })
                     .catch((err) => {
                       handleError(res, err.message, "Internal server error");
                     });
                 } else {
-                  // Did not find reserved parking
-                  // Find general parking
+                  //General parkings
+                  const currentTime = new Date();
+                  //Find the general slot for user
                   db.collection(SLOTS_COLLECTION)
                     .findOne({
                       reserveBy: { $lt: currentTime },
@@ -190,140 +251,133 @@ app.post("/parking/book", (req, res) => {
                       reservedParking: false,
                     })
                     .then((spot) => {
-                      console.log(
-                        "Found general spot for reserved user parking: ",
-                        spot
-                      );
                       if (spot == null) {
                         handleError(res, "Sorry! Parking is Full", 400);
                       }
                       let spotAssigned = spot;
                       spotAssigned.assignedUser = ObjectID(user._id);
-                      spotAssigned.reserveBy = addMinutes(new Date(), 30);
+                      spotAssigned.reserveBy = addMinutes(
+                        new Date(),
+                        arrivalTimeIn
+                      );
                       spotAssigned.occupied = false;
                       db.collection(SLOTS_COLLECTION)
                         .updateOne({ spotId: spot.spotId }, spotAssigned)
                         .then((doc) => {
-                          res.status(201).json(spotAssigned);
+                          res.status(201).json({
+                            spotId: spotAssigned.spotId,
+                            reserveBy: spotAssigned.reserveBy,
+                            reservedParking: spotAssigned.reservedParking,
+                          });
                         });
                     })
                     .catch((err) => {
                       handleError(res, err.message, "Internal server error");
                     });
                 }
-              })
-              .catch((err) => {
-                handleError(res, err.message, "Internal server error");
-              });
-          } else {
-            //General parkings
-            const currentTime = new Date();
-            //Find the general slot for user
-            db.collection(SLOTS_COLLECTION)
-              .findOne({
-                reserveBy: { $lt: currentTime },
-                occupied: false,
-                reservedParking: false,
-              })
-              .then((spot) => {
-                console.log("Found general spot for parking: ", spot);
-                if (spot == null) {
-                  handleError(res, "Sorry! Parking is Full", 400);
-                }
-                let spotAssigned = spot;
-                spotAssigned.assignedUser = ObjectID(user._id);
-                spotAssigned.reserveBy = addMinutes(new Date(), 30);
-                spotAssigned.occupied = false;
-                db.collection(SLOTS_COLLECTION)
-                  .updateOne({ spotId: spot.spotId }, spotAssigned)
-                  .then((doc) => {
-                    res.status(201).json(spotAssigned);
-                  });
-              })
-              .catch((err) => {
-                handleError(res, err.message, "Internal server error");
               });
           }
-        }
-      });
+        });
+    }
+  } catch (e) {
+    handleError(res, e, "Something went wrong");
   }
 });
 
 app.post("/parking/check-in", (req, res) => {
-  const userCheckin = req.body;
+  try {
+    const userCheckin = req.body;
 
-  const { error: joiError } = check_in.validate(userCheckin);
-  if (!isEmpty(joiError)) {
-    handleError(res, joiError, 400);
-  } else {
-    const currentTime = new Date();
-    db.collection(USERS_COLLECTION)
-      .findOne({ _id: ObjectID(userCheckin.userId) })
-      .then((user) => {
-        if (user != null) {
-          db.collection(SLOTS_COLLECTION)
-            .findOne({
-              assignedUser: ObjectID(userCheckin.userId),
-              reserveBy: { $gt: currentTime },
-              occupied: false,
-            })
-            .then((spot) => {
-              if (spot == null) {
-                handleError(
-                  res,
-                  "Your parking time expired or booking not found",
-                  400
-                );
-              } else {
-                db.collection(SLOTS_COLLECTION)
-                  .updateOne(
-                    { spotId: spot.spotId },
-                    {
-                      $set: {
-                        checkInTime: new Date(),
-                        occupied: true,
-                      },
-                    }
-                  )
-                  .then((doc) => {
-                    res.status(201).json({
-                      success: "Check In successful",
-                      spotId: spot.spotId,
+    const { error: joiError } = check_in.validate(userCheckin);
+    if (!isEmpty(joiError)) {
+      handleError(res, joiError, 400);
+    } else {
+      const currentTime = new Date();
+      db.collection(USERS_COLLECTION)
+        .findOne({ _id: ObjectID(userCheckin.userId) })
+        .then((user) => {
+          if (user != null) {
+            db.collection(SLOTS_COLLECTION)
+              .findOne({
+                assignedUser: ObjectID(userCheckin.userId),
+                reserveBy: { $gt: currentTime },
+                occupied: false,
+              })
+              .then((spot) => {
+                if (spot == null) {
+                  handleError(
+                    res,
+                    "Your parking time expired or booking not found",
+                    400
+                  );
+                } else {
+                  db.collection(SLOTS_COLLECTION)
+                    .updateOne(
+                      { spotId: spot.spotId },
+                      {
+                        $set: {
+                          checkInTime: new Date(),
+                          occupied: true,
+                        },
+                      }
+                    )
+                    .then((doc) => {
+                      res.status(201).json({
+                        success: "Check In successful",
+                        spotId: spot.spotId,
+                      });
                     });
-                  });
-              }
-            });
-        }
-      });
+                }
+              });
+          }
+        });
+    }
+  } catch (e) {
+    handleError(res, e, "Something went wrong");
   }
 });
 
 app.post("/parking/check-out", (req, res) => {
-  const userCheckout = req.body;
+  try {
+    const userCheckout = req.body;
 
-  const { error: joiError } = check_out.validate(userCheckout);
-  if (!isEmpty(joiError)) {
-    handleError(res, joiError, 400);
-  } else {
-    db.collection(USERS_COLLECTION)
-      .findOne({ _id: ObjectID(userCheckin.userId) })
-      .then((user) => {
-        db.collection(SLOTS_COLLECTION)
-          .updateOne(
-            { spotId: spot.spotId },
-            {
-              $set: {
-                assignedUser: "",
-                reserveBy: new Date(0),
-                checkInTime: new Date(0),
-                occupied: false,
+    const { error: joiError } = check_out.validate(userCheckout);
+    if (!isEmpty(joiError)) {
+      handleError(res, joiError, 400);
+    } else {
+      db.collection(USERS_COLLECTION)
+        .findOne({ _id: ObjectID(userCheckout.userId) })
+        .then((user) => {
+          db.collection(SLOTS_COLLECTION)
+            .updateOne(
+              {
+                spotId: userCheckout.spotId,
+                assignedUser: ObjectID(userCheckout.userId),
               },
-            }
-          )
-          .then((doc) => {
-            res.status(201).json({ success: "Check out successful" });
-          });
-      });
+              {
+                $set: {
+                  assignedUser: "",
+                  reserveBy: new Date(0),
+                  checkInTime: new Date(0),
+                  occupied: false,
+                },
+              }
+            )
+            .then((doc) => {
+              if (doc.modifiedCount > 0) {
+                res.status(201).json({ success: "Check out successful" });
+              } else {
+                handleError(
+                  res,
+                  "Invalid parking number for User or spot already checked out",
+                  400
+                );
+              }
+            });
+        });
+    }
+  } catch (e) {
+    handleError(res, e, "Something went wrong");
   }
 });
 

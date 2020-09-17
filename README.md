@@ -1,18 +1,63 @@
 ## Requirements
 
-* [Node.js](http://nodejs.org/)
-* [Heroku Account](https://signup.heroku.com/)
-* [Heroku Toolbelt](https://toolbelt.heroku.com/)
-* [mLab account](https://mlab.com/signup/)
+- [Node.js](http://nodejs.org/)
+
+- MongoDB
 
 ## Installation
 
-1. Clone repo
-2. Run `heroku create`
-3. Run `npm install`
-4. Create a new single-node Sandbox MongoDB database in US EAST
-5. Set `MONGOLAB_URI` env var on Heroku
-6. Run `git push heroku master`
-7. Run `heroku ps:scale web=1`
-8. Run `heroku open`
+- Update the environment variables in .env file
 
+MONGODB_URI
+USERS_COLLECTION
+SLOTS_COLLECTION
+
+- Run the following command:
+
+```sh
+node generate_parking_spots.js
+```
+
+## MongoDB Database Design:
+
+     - parking_slots
+            - spotId
+            - assignedUser
+            - occupied
+            - reserveBy
+            - checkInTime
+            - reservedParking
+     - users
+            - userName
+            - Password
+            - MobileNumber
+            - Name
+            - CarNo
+            - reservedParking
+            - createDate
+
+## API Endpoints:
+
+"/user"
+GET: finds all registered users
+
+"/user/signup"
+POST: Register a user
+
+"/user/signin"
+POST: Signin a user
+
+"/parking/book"
+POST: Provides the parking slot for user
+
+"/parking/occupied"
+GET: finds all occupied parking slots
+
+"/parking/free"
+GET: finds all free parking slots
+
+"/parking/check-in"
+POST: Checks in a parking slot with parking ID
+
+"/parking/check-out"
+POST: Check out a parking with parking ID
