@@ -4,6 +4,17 @@
 
 - MongoDB
 
+## Project Details
+The office basement has a parking lot of 120 car parking space capacity out of which 20% is reserved for differently-abled and pregnant womensince its closest to the lift.
+Reserving a parking space has become a tedious job and consumes a good amount of time, hence management has decided toautomate it based on a first come first serve basis with the following features.
+
+### Requirements:
+- Users can book a parking space 15 mins prior to arrival, in which he will get a parking number.
+- If the user fails to reach in 30 mins then the allotted space again goes for rebooking (15 mins extra wait time).
+- If Reserved space is occupied completely then the reserved users will be allotted general parking space.
+- If 50% capacity is utilized, then 15 mins extra wait time will be eliminated (for both reserved and general).
+- If there is a clash for the general use and reserved for a general parking spot than the reserved user will be a priority.
+
 ## Installation
 
 - Update the environment variables in .env file
